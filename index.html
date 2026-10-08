@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Device Manager Dashboard
+    </title>
+
+    <link
+        rel="icon"
+        type="image/svg+xml"
+        href="favicon.svg"
+    >
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+
+</head>
+
+<body>
+
+    <!-- =========================================
+         HEADER
+    ========================================== -->
+
+    <header class="dashboard-header">
+
+        <div class="header-left">
+
+            <h1>
+                Device Manager
+            </h1>
+
+            <p>
+                Device Management Dashboard
+            </p>
+
+        </div>
+
+        <div class="header-right">
+
+            <span
+                id="connectionStatus"
+                class="connection offline"
+            >
+                Backend: Disconnected
+            </span>
+
+        </div>
+
+    </header>
+
+
+    <!-- =========================================
+         MAIN DASHBOARD
+    ========================================== -->
+
+    <main class="dashboard-container">
+
+
+        <!-- =====================================
+             SUMMARY CARDS
+        ====================================== -->
+
+        <section class="summary-grid">
+
+
+            <!-- TOTAL DEVICES -->
+
+            <div class="summary-card">
+
+                <div class="summary-icon">
+                    📱
+                </div>
+
+                <div class="summary-content">
+
+                    <span class="summary-label">
+                        Total Devices
+                    </span>
+
+                    <strong
+                        id="totalDevices"
+                        class="summary-value"
+                    >
+                        0
+                    </strong>
+
+                </div>
+
+            </div>
+
+
+            <!-- ONLINE -->
+
+            <div class="summary-card">
+
+                <div class="summary-icon">
+                    🟢
+                </div>
+
+                <div class="summary-content">
+
+                    <span class="summary-label">
+                        Online
+                    </span>
+
+                    <strong
+                        id="onlineDevices"
+                        class="summary-value"
+                    >
+                        0
+                    </strong>
+
+                </div>
+
+            </div>
+
+
+            <!-- OFFLINE -->
+
+            <div class="summary-card">
+
+                <div class="summary-icon">
+                    🔴
+                </div>
+
+                <div class="summary-content">
+
+                    <span class="summary-label">
+                        Offline
+                    </span>
+
+                    <strong
+                        id="offlineDevices"
+                        class="summary-value"
+                    >
+                        0
+                    </strong>
+
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- =====================================
+             DEVICE SECTION
+        ====================================== -->
+
+        <section class="devices-section">
+
+
+            <!-- SECTION HEADER -->
+
+            <div class="section-header">
+
+                <div>
+
+                    <h2>
+                        Enrolled Devices
+                    </h2>
+
+                    <p>
+                        Monitor registered Android devices
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <!-- =================================
+                 SEARCH / FILTER
+            ================================== -->
+
+            <div class="device-controls">
+
+                <div class="search-box">
+
+                    <input
+                        id="searchInput"
+                        type="search"
+                        placeholder="Search devices..."
+                        autocomplete="off"
+                    >
+
+                </div>
+
+
+                <div class="filter-box">
+
+                    <select
+                        id="statusFilter"
+                    >
+
+                        <option value="all">
+                            All Devices
+                        </option>
+
+                        <option value="online">
+                            Online
+                        </option>
+
+                        <option value="offline">
+                            Offline
+                        </option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+
+            <!-- =================================
+                 DEVICE LIST
+            ================================== -->
+
+            <div
+                id="deviceList"
+                class="device-grid"
+            >
+
+                <div class="loading">
+                    Loading devices...
+                </div>
+
+            </div>
+
+
+            <!-- =================================
+                 DEVICE DETAILS
+            ================================== -->
+
+            <section
+                id="deviceDetails"
+                class="device-details"
+                style="display:none;"
+            >
+
+                <div class="details-header">
+
+                    <button
+                        id="closeDeviceDetails"
+                        type="button"
+                        class="back-button"
+                    >
+                        ← Back to Devices
+                    </button>
+
+                </div>
+
+
+                <div
+                    id="deviceDetailsContent"
+                    class="device-details-content"
+                >
+
+                </div>
+
+            </section>
+
+        </section>
+
+    </main>
+
+
+    <!-- =========================================
+         SOCKET.IO CLIENT
+    ========================================== -->
+
+    <script
+        src="https://device-manager-backend-e1b3.onrender.com/socket.io/socket.io.js"
+    ></script>
+
+
+    <!-- =========================================
+         DASHBOARD JAVASCRIPT
+    ========================================== -->
+
+    <script
+        src="app.js"
+    ></script>
+
+</body>
+
+</html>
+
