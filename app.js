@@ -1,2097 +1,777 @@
+"use strict";
+
 const API_BASE_URL =
     "https://device-manager-backend-e1b3.onrender.com";
 
-const API_URL =
-    `${API_BASE_URL}/api/devices`;
+const API_URL = `${API_BASE_URL}/api/devices`;
+const TOKEN_KEY = "deviceManagerToken";
 
-
-// ==========================================
-// AUTHENTICATION
-// ==========================================
-
-let authToken =
-    localStorage.getItem("deviceManagerToken");
-
-
-// ==========================================
-// GLOBAL DEVICE DATA
-// ==========================================
-
-let allDevices = [];
-
-
-// ==========================================
-// SELECTED DEVICE
-// ==========================================
-
-let selectedDeviceUuid = null;
-
-
-// ==========================================
-// DASHBOARD LOAD STATE
-// ==========================================
-
-let isLoadingDevices = false;
-
-
-// ==========================================
-// SOCKET
-// ==========================================
-
+let authToken = localStorage.getItem(TOKEN_KEY);
+let devices = [];
+let selectedDevice = null;
 let socket = null;
+let refreshTimer = null;
 
+const REQUEST_TYPES = [
+    { value: "camera", label: "Camera", icon: "📷" },
+    { value: "microphone", label: "Microphone", icon: "🎙️" },
+    { value: "contacts", label: "Contacts", icon: "👥" },
+    { value: "location", label: "Foreground location", icon: "📍" },
+    {
+        value: "background_location",
+        label: "Background location",
+        icon: "🗺️"
+    },
+    { value: "media", label: "Media access", icon: "🖼️" }
+];
 
-// ==========================================
-// CREATE LOGIN SCREEN
-// ==========================================
+document.addEventListener("DOMContentLoaded", () => {
+    addRequestStyles();
+    initializeDashboard();
+});
 
-function createLoginScreen() {
+function escapeHTML(value) {
+    return String(value ?? "").replace(/[&<>"']/g, character => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    })[character]);
+}
 
-    if (
-        document.getElementById(
-            "loginScreen"
-        )
-    ) {
-        return;
-    }
+function getElement(id) {
+    return document.getElementById(id);
+}
 
-    const loginScreen =
-        document.createElement("div");
+function addRequestStyles() {
+    if (getElement("requestStyles")) return;
 
-    loginScreen.id =
-        "loginScreen";
-
-    loginScreen.innerHTML = `
-
-        <div
-            style="
-                position:fixed;
-                inset:0;
-                display:flex;
-                align-items:center;
-                justify-content:center;
-                background:#f4f6f8;
-                z-index:99999;
-                padding:20px;
-            "
-        >
-
-            <div
-                style="
-                    width:100%;
-                    max-width:400px;
-                    background:white;
-                    border-radius:14px;
-                    padding:30px;
-                    box-shadow:0 10px 35px rgba(0,0,0,0.12);
-                "
-            >
-
-                <h1
-                    style="
-                        margin-top:0;
-                        margin-bottom:8px;
-                    "
-                >
-                    Device Manager
-                </h1>
-
-                <p
-                    style="
-                        margin-top:0;
-                        color:#666;
-                    "
-                >
-                    Admin Dashboard Login
-                </p>
-
-                <form
-                    id="loginForm"
-                >
-
-                    <label
-                        style="
-                            display:block;
-                            margin-bottom:6px;
-                            font-weight:600;
-                        "
-                    >
-                        Username
-                    </label>
-
-                    <input
-                        id="loginUsername"
-                        type="text"
-                        autocomplete="username"
-                        placeholder="Username"
-                        required
-                        style="
-                            width:100%;
-                            box-sizing:border-box;
-                            padding:12px;
-                            margin-bottom:16px;
-                            border:1px solid #ccc;
-                            border-radius:8px;
-                            font-size:15px;
-                        "
-                    >
-
-                    <label
-                        style="
-                            display:block;
-                            margin-bottom:6px;
-                            font-weight:600;
-                        "
-                    >
-                        Password
-                    </label>
-
-                    <input
-                        id="loginPassword"
-                        type="password"
-                        autocomplete="current-password"
-                        placeholder="Password"
-                        required
-                        style="
-                            width:100%;
-                            box-sizing:border-box;
-                            padding:12px;
-                            margin-bottom:16px;
-                            border:1px solid #ccc;
-                            border-radius:8px;
-                            font-size:15px;
-                        "
-                    >
-
-                    <button
-                        id="loginButton"
-                        type="submit"
-                        style="
-                            width:100%;
-                            padding:12px;
-                            border:0;
-                            border-radius:8px;
-                            cursor:pointer;
-                            font-size:16px;
-                            font-weight:600;
-                        "
-                    >
-                        Login
-                    </button>
-
-                    <div
-                        id="loginMessage"
-                        style="
-                            margin-top:15px;
-                            min-height:20px;
-                            text-align:center;
-                        "
-                    ></div>
-
-                </form>
-
-            </div>
-
-        </div>
-    `;
-
-    document.body.appendChild(
-        loginScreen
-    );
-
-    const loginForm =
-        document.getElementById(
-            "loginForm"
-        );
-
-    loginForm.addEventListener(
-        "submit",
-        async (event) => {
-
-            event.preventDefault();
-
-            await login();
-
+    const style = document.createElement("style");
+    style.id = "requestStyles";
+    style.textContent = `
+        .request-section {
+            margin-top: 24px;
+            padding: 20px;
+            border: 1px solid #dfe3e8;
+            border-radius: 12px;
+            background: #fff;
         }
-    );
+
+        .request-section h3 {
+            margin: 0 0 8px;
+        }
+
+        .request-note {
+            color: #64748b;
+            font-size: 13px;
+            line-height: 1.5;
+            margin: 0 0 16px;
+        }
+
+        .request-grid {
+            display: grid;
+            grid-template-columns: repeat(
+                auto-fit, minmax(180px, 1fr)
+            );
+            gap: 10px;
+        }
+
+        .request-button {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 8px;
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            background: #f8fafc;
+            color: #172033;
+            cursor: pointer;
+            font-size: 14px;
+            text-align: left;
+        }
+
+        .request-button:hover {
+            background: #eaf2ff;
+            border-color: #6597e8;
+        }
+
+        .request-button:disabled {
+            opacity: .55;
+            cursor: wait;
+        }
+
+        .request-message {
+            margin-top: 14px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .request-message.error {
+            color: #b91c1c;
+        }
+
+        .request-message.success {
+            color: #166534;
+        }
+
+        .request-message.info {
+            color: #334155;
+        }
+
+        .login-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background: #f1f5f9;
+        }
+
+        .login-card {
+            width: 100%;
+            max-width: 380px;
+            padding: 28px;
+            background: #fff;
+            border-radius: 14px;
+            box-shadow: 0 12px 40px rgba(15, 23, 42, .12);
+        }
+
+        .login-card h2 {
+            margin-top: 0;
+        }
+
+        .login-card label {
+            display: block;
+            margin: 14px 0 6px;
+        }
+
+        .login-card input {
+            box-sizing: border-box;
+            width: 100%;
+            padding: 11px;
+            border: 1px solid #cbd5e1;
+            border-radius: 7px;
+        }
+
+        .login-card button {
+            width: 100%;
+            margin-top: 18px;
+            padding: 11px;
+            border: 0;
+            border-radius: 7px;
+            color: white;
+            background: #2563eb;
+            cursor: pointer;
+        }
+
+        .login-error {
+            color: #b91c1c;
+            margin-top: 12px;
+            font-size: 14px;
+        }
+    `;
+    document.head.appendChild(style);
 }
 
-
-// ==========================================
-// SHOW LOGIN
-// ==========================================
-
-function showLoginScreen() {
-
-    createLoginScreen();
-
-    const loginScreen =
-        document.getElementById(
-            "loginScreen"
-        );
-
-    if (loginScreen) {
-
-        loginScreen.style.display =
-            "flex";
-
+function showLogin() {
+    disconnectSocket();
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
     }
 
-    const username =
-        document.getElementById(
-            "loginUsername"
+    let overlay = getElement("loginOverlay");
+
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "loginOverlay";
+        overlay.className = "login-overlay";
+
+        overlay.innerHTML = `
+            <form id="loginForm" class="login-card">
+                <h2>Device Manager</h2>
+                <p>Sign in to access your dashboard.</p>
+
+                <label for="loginUsername">Username</label>
+                <input
+                    id="loginUsername"
+                    name="username"
+                    autocomplete="username"
+                    required
+                >
+
+                <label for="loginPassword">Password</label>
+                <input
+                    id="loginPassword"
+                    name="password"
+                    type="password"
+                    autocomplete="current-password"
+                    required
+                >
+
+                <button type="submit">Log in</button>
+                <div id="loginError" class="login-error"></div>
+            </form>
+        `;
+
+        document.body.appendChild(overlay);
+
+        getElement("loginForm").addEventListener(
+            "submit",
+            login
         );
-
-    if (username) {
-
-        username.focus();
-
     }
+
+    overlay.style.display = "flex";
 }
 
+async function login(event) {
+    event.preventDefault();
 
-// ==========================================
-// HIDE LOGIN
-// ==========================================
+    const username = getElement("loginUsername").value.trim();
+    const password = getElement("loginPassword").value;
+    const errorElement = getElement("loginError");
 
-function hideLoginScreen() {
-
-    const loginScreen =
-        document.getElementById(
-            "loginScreen"
-        );
-
-    if (loginScreen) {
-
-        loginScreen.style.display =
-            "none";
-
-    }
-}
-
-
-// ==========================================
-// LOGIN
-// ==========================================
-
-async function login() {
-
-    const username =
-        document.getElementById(
-            "loginUsername"
-        ).value.trim();
-
-    const password =
-        document.getElementById(
-            "loginPassword"
-        ).value;
-
-    const loginButton =
-        document.getElementById(
-            "loginButton"
-        );
-
-    const loginMessage =
-        document.getElementById(
-            "loginMessage"
-        );
-
-    loginButton.disabled =
-        true;
-
-    loginButton.textContent =
-        "Logging in...";
-
-    loginMessage.textContent =
-        "";
+    errorElement.textContent = "Signing in...";
 
     try {
-
-        const response =
-            await fetch(
-                `${API_BASE_URL}/api/auth/login`,
-                {
-                    method: "POST",
-
-                    headers: {
-                        "Content-Type":
-                            "application/json"
-                    },
-
-                    body: JSON.stringify({
-                        username,
-                        password
-                    })
-                }
-            );
-
-        const data =
-            await response.json();
-
-        if (!response.ok) {
-
-            throw new Error(
-                data.message ||
-                "Login failed"
-            );
-
-        }
-
-        if (!data.token) {
-
-            throw new Error(
-                "Login token was not received"
-            );
-
-        }
-
-        authToken =
-            data.token;
-
-        localStorage.setItem(
-            "deviceManagerToken",
-            authToken
-        );
-
-        loginMessage.textContent =
-            "Login successful";
-
-        hideLoginScreen();
-
-        connectSocket();
-
-        await loadDevices();
-
-    } catch (error) {
-
-        console.error(
-            "Login error:",
-            error
-        );
-
-        loginMessage.textContent =
-            error.message ||
-            "Invalid username or password";
-
-    } finally {
-
-        loginButton.disabled =
-            false;
-
-        loginButton.textContent =
-            "Login";
-
-    }
-}
-
-
-// ==========================================
-// LOGOUT
-// ==========================================
-
-function logout() {
-
-    authToken =
-        null;
-
-    localStorage.removeItem(
-        "deviceManagerToken"
-    );
-
-    allDevices =
-        [];
-
-    selectedDeviceUuid =
-        null;
-
-    if (socket) {
-
-        socket.disconnect();
-
-        socket =
-            null;
-
-    }
-
-    showLoginScreen();
-}
-
-
-// ==========================================
-// HANDLE AUTH FAILURE
-// ==========================================
-
-function handleAuthenticationFailure() {
-
-    console.warn(
-        "Dashboard authentication expired"
-    );
-
-    logout();
-}
-
-
-// ==========================================
-// CREATE LOGOUT BUTTON
-// ==========================================
-
-function createLogoutButton() {
-
-    if (
-        document.getElementById(
-            "dashboardLogoutButton"
-        )
-    ) {
-        return;
-    }
-
-    const button =
-        document.createElement("button");
-
-    button.id =
-        "dashboardLogoutButton";
-
-    button.textContent =
-        "Logout";
-
-    button.type =
-        "button";
-
-    button.style.cssText = `
-        position:fixed;
-        top:15px;
-        right:15px;
-        z-index:9998;
-        padding:9px 16px;
-        border:0;
-        border-radius:7px;
-        cursor:pointer;
-        font-weight:600;
-    `;
-
-    button.addEventListener(
-        "click",
-        logout
-    );
-
-    document.body.appendChild(
-        button
-    );
-}
-
-
-// ==========================================
-// AUTHENTICATED API REQUEST
-// ==========================================
-
-async function authenticatedFetch(
-    url,
-    options = {}
-) {
-
-    if (!authToken) {
-
-        handleAuthenticationFailure();
-
-        throw new Error(
-            "Authentication required"
-        );
-
-    }
-
-    const headers = {
-
-        ...(options.headers || {}),
-
-        Authorization:
-            `Bearer ${authToken}`
-
-    };
-
-    const response =
-        await fetch(
-            url,
+        const response = await fetch(
+            `${API_BASE_URL}/api/auth/login`,
             {
-                ...options,
-                headers
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ username, password })
             }
         );
 
-    if (
-        response.status === 401
-    ) {
+        const data = await response.json().catch(() => ({}));
 
-        handleAuthenticationFailure();
+        if (!response.ok || !data.token) {
+            throw new Error(
+                data.message || "Login failed. Check your credentials."
+            );
+        }
 
-        throw new Error(
-            "Authentication expired"
-        );
+        authToken = data.token;
+        localStorage.setItem(TOKEN_KEY, authToken);
 
+        const overlay = getElement("loginOverlay");
+        if (overlay) overlay.style.display = "none";
+
+        await initializeDashboard();
+    } catch (error) {
+        errorElement.textContent = error.message;
+    }
+}
+
+function logout() {
+    authToken = null;
+    selectedDevice = null;
+    localStorage.removeItem(TOKEN_KEY);
+    disconnectSocket();
+
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+
+    showLogin();
+}
+
+async function authenticatedFetch(url, options = {}) {
+    if (!authToken) {
+        throw new Error("Please log in again.");
+    }
+
+    const headers = {
+        ...(options.headers || {}),
+        Authorization: `Bearer ${authToken}`
+    };
+
+    if (options.body && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+    }
+
+    const response = await fetch(url, {
+        ...options,
+        headers
+    });
+
+    if (response.status === 401) {
+        logout();
+        throw new Error("Your session expired. Please log in again.");
     }
 
     return response;
 }
 
-
-// ==========================================
-// LOAD DEVICES
-// ==========================================
+function extractDeviceList(data) {
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data.devices)) return data.devices;
+    if (Array.isArray(data.data)) return data.data;
+    if (Array.isArray(data.rows)) return data.rows;
+    return [];
+}
 
 async function loadDevices() {
-
-    if (!authToken) {
-        return;
-    }
-
-    if (isLoadingDevices) {
-        return;
-    }
-
-    isLoadingDevices =
-        true;
-
-    const deviceList =
-        document.getElementById(
-            "deviceList"
-        );
-
-    const connectionStatus =
-        document.getElementById(
-            "connectionStatus"
-        );
-
-    if (
-        allDevices.length === 0 &&
-        deviceList
-    ) {
-
-        deviceList.innerHTML = `
-            <div class="loading">
-                Loading devices...
-            </div>
-        `;
-
-    }
-
     try {
-
-        const response =
-            await authenticatedFetch(
-                API_URL
-            );
+        const response = await authenticatedFetch(API_URL);
 
         if (!response.ok) {
+            throw new Error(`Unable to load devices (HTTP ${response.status}).`);
+        }
 
-            throw new Error(
-                "HTTP " +
-                response.status
+        const data = await response.json();
+        devices = extractDeviceList(data);
+
+        updateSummary();
+        renderDeviceList();
+
+        if (selectedDevice) {
+            const latest = devices.find(
+                device => String(device.id) === String(selectedDevice.id)
             );
 
-        }
-
-        const data =
-            await response.json();
-
-        if (connectionStatus) {
-
-            connectionStatus.textContent =
-                "Backend: Connected";
-
-            connectionStatus.className =
-                "connection online";
-
-        }
-
-        allDevices =
-            data.devices || [];
-
-        displayFilteredDevices();
-
-        if (selectedDeviceUuid) {
-
-            const selectedDevice =
-                allDevices.find(
-                    device =>
-                        device.device_uuid ===
-                        selectedDeviceUuid
-                );
-
-            if (selectedDevice) {
-
-                displayDeviceDetails(
-                    selectedDevice
-                );
-
+            if (latest) {
+                selectedDevice = latest;
+                renderDeviceDetails(latest);
             } else {
-
                 closeDeviceDetails();
-
             }
-
         }
-
     } catch (error) {
+        if (error.message.includes("session expired")) return;
+        console.error("Device loading error:", error);
 
-        console.error(
-            "Dashboard error:",
-            error
-        );
-
-        if (!authToken) {
-            return;
-        }
-
-        if (connectionStatus) {
-
-            connectionStatus.textContent =
-                "Backend: Disconnected";
-
-            connectionStatus.className =
-                "connection offline";
-
-        }
-
-        if (
-            allDevices.length === 0 &&
-            deviceList
-        ) {
-
-            deviceList.innerHTML = `
-                <div class="empty">
-
-                    Unable to connect to backend.
-
-                    <br><br>
-
-                    Make sure the Node.js server
-                    is running.
-
+        const list = getElement("deviceList");
+        if (list) {
+            list.innerHTML = `
+                <div class="loading">
+                    ${escapeHTML(error.message)}
                 </div>
             `;
-
-            updateSummary([]);
-
         }
-
-    } finally {
-
-        isLoadingDevices =
-            false;
-
     }
 }
 
-
-// ==========================================
-// FILTER DEVICES
-// ==========================================
-
-function displayFilteredDevices() {
-
-    const searchInput =
-        document.getElementById(
-            "searchInput"
-        );
-
-    const statusFilter =
-        document.getElementById(
-            "statusFilter"
-        );
-
-    const searchText =
-        searchInput
-            ? searchInput.value
-                .trim()
-                .toLowerCase()
-            : "";
-
-    const selectedStatus =
-        statusFilter
-            ? statusFilter.value
-            : "all";
-
-    const filteredDevices =
-        allDevices.filter(
-            device => {
-
-                const searchableText =
-                    [
-                        device.device_name,
-                        device.manufacturer,
-                        device.model,
-                        device.android_version,
-                        device.app_version,
-                        device.device_uuid
-                    ]
-                    .filter(
-                        value =>
-                            value !== null &&
-                            value !== undefined
-                    )
-                    .join(" ")
-                    .toLowerCase();
-
-                const matchesSearch =
-                    searchText === "" ||
-                    searchableText.includes(
-                        searchText
-                    );
-
-                const isOnline =
-                    device.is_online === true;
-
-                let matchesStatus =
-                    true;
-
-                if (
-                    selectedStatus ===
-                    "online"
-                ) {
-
-                    matchesStatus =
-                        isOnline;
-
-                } else if (
-                    selectedStatus ===
-                    "offline"
-                ) {
-
-                    matchesStatus =
-                        !isOnline;
-
-                }
-
-                return (
-                    matchesSearch &&
-                    matchesStatus
-                );
-
-            }
-        );
-
-    displayDevices(
-        filteredDevices
-    );
+function isOnline(device) {
+    return device.is_online === true ||
+        device.is_online === "true" ||
+        device.status === "online";
 }
 
+function updateSummary() {
+    const online = devices.filter(isOnline).length;
 
-// ==========================================
-// DISPLAY DEVICES
-// ==========================================
+    if (getElement("totalDevices")) {
+        getElement("totalDevices").textContent = devices.length;
+    }
+    if (getElement("onlineDevices")) {
+        getElement("onlineDevices").textContent = online;
+    }
+    if (getElement("offlineDevices")) {
+        getElement("offlineDevices").textContent =
+            devices.length - online;
+    }
 
-function displayDevices(
-    devices
-) {
+    const status = getElement("connectionStatus");
+    if (status) {
+        status.textContent = "Backend: Connected";
+        status.classList.remove("offline");
+        status.classList.add("online");
+    }
+}
 
-    const deviceList =
-        document.getElementById(
-            "deviceList"
-        );
+function renderDeviceList() {
+    const container = getElement("deviceList");
+    if (!container) return;
 
-    updateSummary(
-        allDevices
-    );
+    const search = (getElement("searchInput")?.value || "")
+        .toLowerCase()
+        .trim();
 
-    if (
-        !devices ||
-        devices.length === 0
-    ) {
+    const filter = getElement("statusFilter")?.value || "all";
 
-        deviceList.innerHTML = `
-            <div class="empty">
-                No matching devices found.
+    const filtered = devices.filter(device => {
+        const text = [
+            device.device_name,
+            device.manufacturer,
+            device.model,
+            device.android_version,
+            device.device_uuid
+        ].join(" ").toLowerCase();
+
+        if (search && !text.includes(search)) return false;
+        if (filter === "online" && !isOnline(device)) return false;
+        if (filter === "offline" && isOnline(device)) return false;
+
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        container.innerHTML = `
+            <div class="loading">
+                ${devices.length
+                    ? "No devices match your search."
+                    : "No enrolled devices found."}
             </div>
         `;
-
         return;
     }
 
-    deviceList.innerHTML =
-        devices
-            .map(
-                device =>
-                    createDeviceCard(
-                        device
-                    )
-            )
-            .join("");
-}
-
-
-// ==========================================
-// CREATE DEVICE CARD
-// ==========================================
-
-function createDeviceCard(
-    device
-) {
-
-    const online =
-        device.is_online === true;
-
-    const statusClass =
-        online
-            ? "status-online"
-            : "status-offline";
-
-    const statusText =
-        online
-            ? "Online"
-            : "Offline";
-
-    const deviceIndex =
-        allDevices.findIndex(
-            item =>
-                item.device_uuid ===
-                device.device_uuid
-        );
-
-    const deviceNumber =
-        deviceIndex >= 0
-            ? deviceIndex + 1
-            : "";
-
-    return `
-        <div
+    container.innerHTML = filtered.map(device => `
+        <button
+            type="button"
             class="device-card"
-            data-device-uuid="${escapeHtml(
-                device.device_uuid
-            )}"
-            onclick="openDeviceDetails(
-                '${escapeJs(
-                    device.device_uuid
-                )}'
-            )"
+            data-device-id="${escapeHTML(device.id)}"
+            style="text-align:left;cursor:pointer;"
         >
-
             <div class="device-header">
-
-                <div class="device-title-area">
-
-                    <div class="device-number">
-                        Device ${deviceNumber}
-                    </div>
-
-                    <h3 class="device-name">
-                        ${escapeHtml(
-                            device.device_name
-                        )}
-                    </h3>
-
-                    <div class="device-model">
-
-                        ${escapeHtml(
-                            device.manufacturer
-                        )}
-
-                        ${escapeHtml(
-                            device.model
-                        )}
-
-                    </div>
-
-                </div>
-
-                <div class="status">
-
-                    <span
-                        class="status-dot ${statusClass}"
-                    ></span>
-
-                    <span class="status-text">
-                        ${statusText}
-                    </span>
-
-                </div>
-
+                <strong>${escapeHTML(device.device_name || device.model || "Android device")}</strong>
+                <span class="${isOnline(device) ? "status-online" : "status-offline"}">
+                    ${isOnline(device) ? "Online" : "Offline"}
+                </span>
             </div>
+            <p>${escapeHTML(device.manufacturer || "")}
+               ${escapeHTML(device.model || "")}</p>
+            <p>Android ${escapeHTML(device.android_version || "Unknown")}</p>
+        </button>
+    `).join("");
 
-            <div class="device-info">
-
-                <div class="info-row">
-
-                    <span class="info-label">
-                        Android
-                    </span>
-
-                    <span class="info-value">
-                        ${escapeHtml(
-                            device.android_version
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="info-row">
-
-                    <span class="info-label">
-                        App Version
-                    </span>
-
-                    <span class="info-value">
-                        ${escapeHtml(
-                            device.app_version
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="info-row">
-
-                    <span class="info-label">
-                        Device ID
-                    </span>
-
-                    <span class="info-value device-id">
-                        ${escapeHtml(
-                            device.device_uuid
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="info-row">
-
-                    <span class="info-label">
-                        Registered
-                    </span>
-
-                    <span class="info-value">
-                        ${formatDate(
-                            device.created_at
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="info-row">
-
-                    <span class="info-label">
-                        Last Seen
-                    </span>
-
-                    <span
-                        class="info-value last-seen"
-                        data-last-seen="${escapeHtml(
-                            device.last_seen
-                        )}"
-                    >
-                        ${formatDate(
-                            device.last_seen
-                        )}
-                    </span>
-
-                </div>
-
-                <div class="info-row">
-
-                    <span class="info-label">
-                        Activity
-                    </span>
-
-                    <span
-                        class="info-value activity-time"
-                        data-last-seen="${escapeHtml(
-                            device.last_seen
-                        )}"
-                    >
-                        ${timeAgo(
-                            device.last_seen
-                        )}
-                    </span>
-
-                </div>
-
-            </div>
-
-            <div class="permissions">
-
-                <h3>
-                    Permissions
-                </h3>
-
-                ${permissionRow(
-                    "Camera",
-                    device.camera
-                )}
-
-                ${permissionRow(
-                    "Microphone",
-                    device.microphone
-                )}
-
-                ${permissionRow(
-                    "Contacts",
-                    device.contacts
-                )}
-
-                ${permissionRow(
-                    "Foreground Location",
-                    device.location_foreground
-                )}
-
-                ${permissionRow(
-                    "Background Location",
-                    device.location_background
-                )}
-
-                ${permissionRow(
-                    "Media",
-                    device.media
-                )}
-
-            </div>
-
-            <div class="device-card-footer">
-                Click to view device details →
-            </div>
-
-        </div>
-    `;
-}
-
-
-// ==========================================
-// OPEN DEVICE DETAILS
-// ==========================================
-
-function openDeviceDetails(
-    deviceUuid
-) {
-
-    const device =
-        allDevices.find(
-            item =>
-                item.device_uuid ===
-                deviceUuid
-        );
-
-    if (!device) {
-
-        console.error(
-            "Device not found:",
-            deviceUuid
-        );
-
-        return;
-    }
-
-    selectedDeviceUuid =
-        deviceUuid;
-
-    displayDeviceDetails(
-        device
-    );
-
-    const deviceList =
-        document.getElementById(
-            "deviceList"
-        );
-
-    const deviceControls =
-        document.querySelector(
-            ".device-controls"
-        );
-
-    const sectionHeader =
-        document.querySelector(
-            ".section-header"
-        );
-
-    const deviceDetails =
-        document.getElementById(
-            "deviceDetails"
-        );
-
-    if (deviceList) {
-
-        deviceList.style.display =
-            "none";
-
-    }
-
-    if (deviceControls) {
-
-        deviceControls.style.display =
-            "none";
-
-    }
-
-    if (sectionHeader) {
-
-        sectionHeader.style.display =
-            "none";
-
-    }
-
-    if (deviceDetails) {
-
-        deviceDetails.style.display =
-            "block";
-
-    }
-
-    window.scrollTo({
-        top: 0,
-        behavior: "smooth"
+    container.querySelectorAll("[data-device-id]").forEach(button => {
+        button.addEventListener("click", () => {
+            const device = devices.find(
+                item => String(item.id) === button.dataset.deviceId
+            );
+            if (device) openDeviceDetails(device);
+        });
     });
 }
 
+function openDeviceDetails(device) {
+    selectedDevice = device;
 
-// ==========================================
-// DISPLAY DEVICE DETAILS
-// ==========================================
+    if (getElement("deviceList")) {
+        getElement("deviceList").style.display = "none";
+    }
 
-function displayDeviceDetails(
-    device
-) {
+    const details = getElement("deviceDetails");
+    if (details) details.style.display = "block";
 
-    const content =
-        document.getElementById(
-            "deviceDetailsContent"
-        );
+    renderDeviceDetails(device);
+}
 
-    if (!content) {
+function closeDeviceDetails() {
+    selectedDevice = null;
+
+    if (getElement("deviceDetails")) {
+        getElement("deviceDetails").style.display = "none";
+    }
+    if (getElement("deviceList")) {
+        getElement("deviceList").style.display = "";
+    }
+}
+
+function getPermissionValues(device) {
+    const p = device.permissions ||
+        device.device_permissions ||
+        device.permission_status ||
+        {};
+
+    return {
+        camera: p.camera,
+        microphone: p.microphone,
+        contacts: p.contacts,
+        location_foreground:
+            p.location_foreground ?? p.locationForeground,
+        location_background:
+            p.location_background ?? p.locationBackground,
+        media: p.media
+    };
+}
+
+function permissionLabel(value) {
+    if (value === true || value === "true") {
+        return '<span class="permission-granted">✓ Granted</span>';
+    }
+
+    return '<span class="permission-denied">✕ Denied</span>';
+}
+
+function renderDeviceDetails(device) {
+    const content = getElement("deviceDetailsContent");
+    if (!content) return;
+
+    const permissions = getPermissionValues(device);
+    const online = isOnline(device);
+
+    const permissionRows = [
+        ["Camera", permissions.camera],
+        ["Microphone", permissions.microphone],
+        ["Contacts", permissions.contacts],
+        ["Foreground Location", permissions.location_foreground],
+        ["Background Location", permissions.location_background],
+        ["Media", permissions.media]
+    ];
+
+    const rows = permissionRows.map(([label, value]) => `
+        <div class="permission-row">
+            <span>${escapeHTML(label)}</span>
+            <span>${permissionLabel(value)}</span>
+        </div>
+    `).join("");
+
+    const requests = REQUEST_TYPES.map(request => `
+        <button
+            type="button"
+            class="request-button"
+            data-request-type="${escapeHTML(request.value)}"
+        >
+            <span>${request.icon}</span>
+            <span>Request ${escapeHTML(request.label)}</span>
+        </button>
+    `).join("");
+
+    content.innerHTML = `
+        <div class="details-section">
+            <h2>${escapeHTML(device.device_name || device.model || "Device")}</h2>
+            <p>${online ? "🟢 Online" : "🔴 Offline"}</p>
+
+            <h3>Device Information</h3>
+            <div class="permission-row">
+                <span>Device ID</span>
+                <span>${escapeHTML(device.device_uuid || device.id)}</span>
+            </div>
+            <div class="permission-row">
+                <span>Manufacturer</span>
+                <span>${escapeHTML(device.manufacturer || "Unknown")}</span>
+            </div>
+            <div class="permission-row">
+                <span>Model</span>
+                <span>${escapeHTML(device.model || "Unknown")}</span>
+            </div>
+            <div class="permission-row">
+                <span>Android Version</span>
+                <span>${escapeHTML(device.android_version || "Unknown")}</span>
+            </div>
+            <div class="permission-row">
+                <span>App Version</span>
+                <span>${escapeHTML(device.app_version || "Unknown")}</span>
+            </div>
+            <div class="permission-row">
+                <span>Registered</span>
+                <span>${escapeHTML(formatDate(device.created_at))}</span>
+            </div>
+            <div class="permission-row">
+                <span>Last Seen</span>
+                <span>${escapeHTML(formatDate(device.last_seen))}</span>
+            </div>
+        </div>
+
+        <div class="details-section">
+            <h3>Permission Status</h3>
+            ${rows}
+        </div>
+
+        <section class="request-section">
+            <h3>Request a Device Permission</h3>
+            <p class="request-note">
+                Choose a request to send to this enrolled device.
+                A request is not a permission grant. The Android app
+                must receive it and show the appropriate user-approved
+                permission flow.
+            </p>
+            <div class="request-grid">
+                ${requests}
+            </div>
+            <div
+                id="requestMessage"
+                class="request-message"
+                role="status"
+                aria-live="polite"
+            ></div>
+        </section>
+    `;
+
+    content.querySelectorAll("[data-request-type]").forEach(button => {
+        button.addEventListener("click", () => {
+            sendDeviceRequest(
+                device,
+                button.dataset.requestType,
+                button
+            );
+        });
+    });
+
+    const backButton = getElement("closeDeviceDetails");
+    if (backButton) {
+        backButton.onclick = closeDeviceDetails;
+    }
+}
+
+async function sendDeviceRequest(device, requestType, button) {
+    const message = getElement("requestMessage");
+    if (!message) return;
+
+    if (!device.id) {
+        message.className = "request-message error";
+    message.textContent = "This device has no database ID.";
         return;
     }
 
-    const online =
-        device.is_online === true;
+    const request = REQUEST_TYPES.find(
+        item => item.value === requestType
+    );
 
-    const statusClass =
-        online
-            ? "status-online"
-            : "status-offline";
+    if (!request) return;
 
-    const statusText =
-        online
-            ? "Online"
-            : "Offline";
+    const confirmed = window.confirm(
+        `Send a ${request.label} request to ` +
+        `${device.device_name || device.model || "this device"}?`
+    );
 
-    const deviceIndex =
-        allDevices.findIndex(
-            item =>
-                item.device_uuid ===
-                device.device_uuid
+    if (!confirmed) return;
+
+    const originalText = button.innerHTML;
+    button.disabled = true;
+    button.textContent = "Sending request...";
+
+    message.className = "request-message info";
+    message.textContent = "Contacting backend...";
+
+    try {
+        const response = await authenticatedFetch(
+            `${API_URL}/request`,
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    device_id: Number(device.id),
+                    request_type: requestType
+                })
+            }
         );
 
-    const deviceNumber =
-        deviceIndex >= 0
-            ? deviceIndex + 1
-            : "";
-
-    content.innerHTML = `
-
-        <div class="details-card">
-
-            <div class="details-title">
-
-                <div>
-
-                    <div class="device-number">
-                        Device ${deviceNumber}
-                    </div>
-
-                    <h2>
-                        ${escapeHtml(
-                            device.device_name
-                        )}
-                    </h2>
-
-                    <p>
-
-                        ${escapeHtml(
-                            device.manufacturer
-                        )}
-
-                        ${escapeHtml(
-                            device.model
-                        )}
-
-                    </p>
-
-                </div>
-
-                <div class="status details-status">
-
-                    <span
-                        class="status-dot ${statusClass}"
-                    ></span>
-
-                    <span class="status-text">
-                        ${statusText}
-                    </span>
-
-                </div>
-
-            </div>
-
-            <div class="details-section">
-
-                <h3>
-                    Device Information
-                </h3>
-
-                ${detailRow(
-                    "Device ID",
-                    device.device_uuid
-                )}
-
-                ${detailRow(
-                    "Manufacturer",
-                    device.manufacturer
-                )}
-
-                ${detailRow(
-                    "Model",
-                    device.model
-                )}
-
-                ${detailRow(
-                    "Android Version",
-                    device.android_version
-                )}
-
-                ${detailRow(
-                    "App Version",
-                    device.app_version
-                )}
-
-                ${detailRow(
-                    "Registered",
-                    formatDate(
-                        device.created_at
-                    )
-                )}
-
-                ${detailRow(
-                    "Last Seen",
-                    formatDate(
-                        device.last_seen
-                    )
-                )}
-
-                ${detailRow(
-                    "Activity",
-                    timeAgo(
-                        device.last_seen
-                    )
-                )}
-
-            </div>
-
-            <div class="details-section">
-
-                <h3>
-                    Permission Status
-                </h3>
-
-                ${permissionDetailRow(
-                    "Camera",
-                    device.camera
-                )}
-
-                ${permissionDetailRow(
-                    "Microphone",
-                    device.microphone
-                )}
-
-                ${permissionDetailRow(
-                    "Contacts",
-                    device.contacts
-                )}
-
-                ${permissionDetailRow(
-                    "Foreground Location",
-                    device.location_foreground
-                )}
-
-                ${permissionDetailRow(
-                    "Background Location",
-                    device.location_background
-                )}
-
-                ${permissionDetailRow(
-                    "Media",
-                    device.media
-                )}
-
-            </div>
-
-        </div>
-    `;
-}
-
-
-// ==========================================
-// DETAIL ROW
-// ==========================================
-
-function detailRow(
-    label,
-    value
-) {
-
-    return `
-        <div class="detail-row">
-
-            <span class="detail-label">
-                ${escapeHtml(label)}
-            </span>
-
-            <span class="detail-value">
-                ${escapeHtml(value)}
-            </span>
-
-        </div>
-    `;
-}
-
-
-// ==========================================
-// PERMISSION DETAIL ROW
-// ==========================================
-
-function permissionDetailRow(
-    name,
-    granted
-) {
-
-    const statusClass =
-        granted
-            ? "permission-granted"
-            : "permission-denied";
-
-    const statusIcon =
-        granted
-            ? "✓"
-            : "✕";
-
-    const statusText =
-        granted
-            ? "Granted"
-            : "Denied";
-
-    return `
-        <div class="permission-detail-row">
-
-            <span class="permission-name">
-                ${escapeHtml(name)}
-            </span>
-
-            <span class="${statusClass}">
-
-                <span class="permission-icon">
-                    ${statusIcon}
-                </span>
-
-                ${statusText}
-
-            </span>
-
-        </div>
-    `;
-}
-
-
-// ==========================================
-// CLOSE DEVICE DETAILS
-// ==========================================
-
-function closeDeviceDetails() {
-
-    selectedDeviceUuid =
-        null;
-
-    const deviceList =
-        document.getElementById(
-            "deviceList"
-        );
-
-    const deviceControls =
-        document.querySelector(
-            ".device-controls"
-        );
-
-    const sectionHeader =
-        document.querySelector(
-            ".section-header"
-        );
-
-    const deviceDetails =
-        document.getElementById(
-            "deviceDetails"
-        );
-
-    if (deviceList) {
-
-        deviceList.style.display =
-            "";
-
-    }
-
-    if (deviceControls) {
-
-        deviceControls.style.display =
-            "";
-
-    }
-
-    if (sectionHeader) {
-
-        sectionHeader.style.display =
-            "";
-
-    }
-
-    if (deviceDetails) {
-
-        deviceDetails.style.display =
-            "none";
-
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            throw new Error(
+                data.message ||
+                `Request failed (HTTP ${response.status}).`
+            );
+        }
+
+        message.className = "request-message success";
+        message.textContent =
+            `${request.label} request created successfully. ` +
+            "It is pending until the Android app receives and handles it.";
+
+    } catch (error) {
+        message.className = "request-message error";
+        message.textContent = error.message;
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalText;
     }
 }
 
+function formatDate(value) {
+    if (!value) return "Unknown";
 
-// ==========================================
-// PERMISSION ROW
-// ==========================================
-
-function permissionRow(
-    name,
-    granted
-) {
-
-    const statusClass =
-        granted
-            ? "permission-granted"
-            : "permission-denied";
-
-    const statusIcon =
-        granted
-            ? "✓"
-            : "✕";
-
-    const statusText =
-        granted
-            ? "Granted"
-            : "Denied";
-
-    return `
-        <div class="permission-row">
-
-            <span class="permission-name">
-                ${escapeHtml(name)}
-            </span>
-
-            <span class="${statusClass}">
-
-                <span class="permission-icon">
-                    ${statusIcon}
-                </span>
-
-                ${statusText}
-
-            </span>
-
-        </div>
-    `;
-}
-
-
-// ==========================================
-// SUMMARY
-// ==========================================
-
-function updateSummary(
-    devices
-) {
-
-    const total =
-        devices.length;
-
-    const online =
-        devices.filter(
-            device =>
-                device.is_online === true
-        ).length;
-
-    const offline =
-        total - online;
-
-    const totalElement =
-        document.getElementById(
-            "totalDevices"
-        );
-
-    const onlineElement =
-        document.getElementById(
-            "onlineDevices"
-        );
-
-    const offlineElement =
-        document.getElementById(
-            "offlineDevices"
-        );
-
-    if (totalElement) {
-
-        totalElement.textContent =
-            total;
-
-    }
-
-    if (onlineElement) {
-
-        onlineElement.textContent =
-            online;
-
-    }
-
-    if (offlineElement) {
-
-        offlineElement.textContent =
-            offline;
-
-    }
-}
-
-
-// ==========================================
-// DATE FORMAT
-// ==========================================
-
-function formatDate(
-    dateString
-) {
-
-    if (!dateString) {
-        return "Never";
-    }
-
-    const date =
-        new Date(
-            dateString
-        );
-
-    if (
-        Number.isNaN(
-            date.getTime()
-        )
-    ) {
-        return "Unknown";
-    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Unknown";
 
     return date.toLocaleString();
 }
 
-
-// ==========================================
-// TIME AGO
-// ==========================================
-
-function timeAgo(
-    dateString
-) {
-
-    if (!dateString) {
-        return "Never";
+function disconnectSocket() {
+    if (socket) {
+        socket.disconnect();
+        socket = null;
     }
-
-    const date =
-        new Date(
-            dateString
-        );
-
-    if (
-        Number.isNaN(
-            date.getTime()
-        )
-    ) {
-        return "Unknown";
-    }
-
-    const difference =
-        Math.floor(
-            (
-                Date.now() -
-                date.getTime()
-            ) / 1000
-        );
-
-    if (difference < 0) {
-        return "Just now";
-    }
-
-    if (difference < 5) {
-        return "Just now";
-    }
-
-    if (difference < 60) {
-
-        return (
-            difference +
-            " seconds ago"
-        );
-
-    }
-
-    const minutes =
-        Math.floor(
-            difference / 60
-        );
-
-    if (minutes < 60) {
-
-        return (
-            minutes +
-            (
-                minutes === 1
-                    ? " minute ago"
-                    : " minutes ago"
-            )
-        );
-
-    }
-
-    const hours =
-        Math.floor(
-            minutes / 60
-        );
-
-    if (hours < 24) {
-
-        return (
-            hours +
-            (
-                hours === 1
-                    ? " hour ago"
-                    : " hours ago"
-            )
-        );
-
-    }
-
-    const days =
-        Math.floor(
-            hours / 24
-        );
-
-    return (
-        days +
-        (
-            days === 1
-                ? " day ago"
-                : " days ago"
-        )
-    );
 }
-
-
-// ==========================================
-// UPDATE RELATIVE TIMES
-// ==========================================
-
-function updateRelativeTimes() {
-
-    const elements =
-        document.querySelectorAll(
-            ".activity-time"
-        );
-
-    elements.forEach(
-        element => {
-
-            element.textContent =
-                timeAgo(
-                    element.dataset.lastSeen
-                );
-
-        }
-    );
-}
-
-
-// ==========================================
-// UPDATE DEVICE FROM HEARTBEAT
-// ==========================================
-
-function updateDeviceFromHeartbeat(
-    heartbeatDevice
-) {
-
-    if (
-        !heartbeatDevice ||
-        !heartbeatDevice.device_uuid
-    ) {
-        return;
-    }
-
-    const deviceIndex =
-        allDevices.findIndex(
-            device =>
-                device.device_uuid ===
-                heartbeatDevice.device_uuid
-        );
-
-    if (deviceIndex === -1) {
-
-        console.log(
-            "New device detected:",
-            heartbeatDevice.device_uuid
-        );
-
-        loadDevices();
-
-        return;
-    }
-
-    allDevices[deviceIndex] = {
-
-        ...allDevices[deviceIndex],
-
-        ...heartbeatDevice
-
-    };
-
-    if (
-        selectedDeviceUuid ===
-        heartbeatDevice.device_uuid
-    ) {
-
-        displayDeviceDetails(
-            allDevices[deviceIndex]
-        );
-
-        return;
-    }
-
-    displayFilteredDevices();
-}
-
-
-// ==========================================
-// HTML ESCAPE
-// ==========================================
-
-function escapeHtml(
-    value
-) {
-
-    if (
-        value === null ||
-        value === undefined
-    ) {
-        return "";
-    }
-
-    return String(value)
-
-        .replaceAll(
-            "&",
-            "&amp;"
-        )
-
-        .replaceAll(
-            "<",
-            "&lt;"
-        )
-
-        .replaceAll(
-            ">",
-            "&gt;"
-        )
-
-        .replaceAll(
-            '"',
-            "&quot;"
-        )
-
-        .replaceAll(
-            "'",
-            "&#039;"
-        );
-}
-
-
-// ==========================================
-// JAVASCRIPT STRING ESCAPE
-// ==========================================
-
-function escapeJs(
-    value
-) {
-
-    if (
-        value === null ||
-        value === undefined
-    ) {
-        return "";
-    }
-
-    return String(value)
-
-        .replaceAll(
-            "\\",
-            "\\\\"
-        )
-
-        .replaceAll(
-            "'",
-            "\\'"
-        )
-
-        .replaceAll(
-            "\n",
-            "\\n"
-        )
-
-        .replaceAll(
-            "\r",
-            "\\r"
-        );
-}
-
-
-// ==========================================
-// SEARCH EVENT
-// ==========================================
-
-const searchInput =
-    document.getElementById(
-        "searchInput"
-    );
-
-if (searchInput) {
-
-    searchInput.addEventListener(
-        "input",
-        () => {
-
-            displayFilteredDevices();
-
-        }
-    );
-}
-
-
-// ==========================================
-// STATUS FILTER EVENT
-// ==========================================
-
-const statusFilter =
-    document.getElementById(
-        "statusFilter"
-    );
-
-if (statusFilter) {
-
-    statusFilter.addEventListener(
-        "change",
-        () => {
-
-            displayFilteredDevices();
-
-        }
-    );
-}
-
-
-// ==========================================
-// CLOSE DETAILS BUTTON
-// ==========================================
-
-const closeDeviceDetailsButton =
-    document.getElementById(
-        "closeDeviceDetails"
-    );
-
-if (closeDeviceDetailsButton) {
-
-    closeDeviceDetailsButton.addEventListener(
-        "click",
-        () => {
-
-            closeDeviceDetails();
-
-        }
-    );
-}
-
-
-// ==========================================
-// SOCKET.IO CONNECTION
-// ==========================================
 
 function connectSocket() {
+    disconnectSocket();
 
+    if (typeof io !== "function" || !authToken) return;
+
+    socket = io(API_BASE_URL, {
+        auth: { token: authToken },
+        reconnection: true
+    });
+
+    socket.on("connect", () => {
+        const status = getElement("connectionStatus");
+        if (status) {
+            status.textContent = "Backend: Connected";
+            status.classList.remove("offline");
+            status.classList.add("online");
+        }
+    });
+
+    socket.on("connect_error", error => {
+        console.warn("Dashboard socket connection error:", error.message);
+    });
+
+    socket.on("devices_updated", loadDevices);
+    socket.on("device_request_created", loadDevices);
+
+    socket.on("disconnect", () => {
+        const status = getElement("connectionStatus");
+        if (status) {
+            status.textContent = "Backend: Reconnecting...";
+            status.classList.remove("online");
+            status.classList.add("offline");
+        }
+    });
+}
+
+function setupDashboardEvents() {
+    const search = getElement("searchInput");
+    const filter = getElement("statusFilter");
+    const logoutButton = getElement("logoutButton");
+
+    if (search) {
+        search.oninput = renderDeviceList;
+    }
+
+    if (filter) {
+        filter.onchange = renderDeviceList;
+    }
+
+    if (logoutButton) {
+        logoutButton.onclick = logout;
+    }
+
+    if (getElement("closeDeviceDetails")) {
+        getElement("closeDeviceDetails").onclick = closeDeviceDetails;
+    }
+}
+
+async function initializeDashboard() {
     if (!authToken) {
+        showLogin();
         return;
     }
 
-    if (socket) {
+    const overlay = getElement("loginOverlay");
+    if (overlay) overlay.style.display = "none";
 
-        socket.disconnect();
+    setupDashboardEvents();
 
-        socket =
-            null;
+    await loadDevices();
+    connectSocket();
 
-    }
+    if (refreshTimer) clearInterval(refreshTimer);
 
-    socket =
-        io(
-            API_BASE_URL,
-            {
-                auth: {
-                    token:
-                        authToken
-                }
-            }
-        );
-
-    socket.on(
-        "connect",
-        () => {
-
-            console.log(
-                "Authenticated WebSocket connected:",
-                socket.id
-            );
-
-            loadDevices();
-
-        }
-    );
-
-    socket.on(
-        "connect_error",
-        (error) => {
-
-            console.error(
-                "WebSocket authentication error:",
-                error.message
-            );
-
-            if (
-                error.message.includes(
-                    "token"
-                ) ||
-                error.message.includes(
-                    "Authentication"
-                ) ||
-                error.message.includes(
-                    "expired"
-                ) ||
-                error.message.includes(
-                    "Invalid"
-                )
-            ) {
-
-                handleAuthenticationFailure();
-
-            }
-
-        }
-    );
-
-    socket.on(
-        "disconnect",
-        () => {
-
-            console.log(
-                "WebSocket disconnected"
-            );
-
-        }
-    );
-
-    socket.on(
-        "devices_updated",
-        () => {
-
-            console.log(
-                "Device list updated"
-            );
-
-            loadDevices();
-
-        }
-    );
-
-    socket.on(
-        "device_heartbeat",
-        (device) => {
-
-            console.log(
-                "Heartbeat received:",
-                device.device_uuid
-            );
-
-            updateDeviceFromHeartbeat(
-                device
-            );
-
-        }
-    );
+    // Fallback refresh if a socket update is missed.
+    refreshTimer = setInterval(loadDevices, 15000);
 }
 
-
-// ==========================================
-// INITIALIZE DASHBOARD
-// ==========================================
-
-function initializeDashboard() {
-
-    createLoginScreen();
-
-    createLogoutButton();
-
-    if (authToken) {
-
-        hideLoginScreen();
-
-        connectSocket();
-
-        loadDevices();
-
-    } else {
-
-        showLoginScreen();
-
-    }
-}
-
-
-// ==========================================
-// FALLBACK REFRESH
-// ==========================================
-
-setInterval(
-    () => {
-
-        if (authToken) {
-
-            loadDevices();
-
-        }
-
-    },
-    30000
-);
-
-
-// ==========================================
-// UPDATE ACTIVITY TIME
-// ==========================================
-
-setInterval(
-    updateRelativeTimes,
-    1000
-);
-
-
-// ==========================================
-// START
-// ==========================================
-
-initializeDashboard();
